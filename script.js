@@ -170,8 +170,9 @@ const API_CONFIG = {
     'edge-api': {
         url: '/api/tts'
     },
-    'oai-tts': {
-        url: 'https://oai-tts.zwei.de.eu.org/v1/audio/speech'
+    'azure-tts-1': {
+        url: '/api/azure-tts', // 使用后端转发
+        format: 'azure-ssml'   // 标记为 Azure SSML 格式，以便区分处理
     }
 };
 
@@ -236,7 +237,7 @@ function updateApiOptions() {
     const currentApi = apiSelect.val();
     
     // 清除除了内置选项之外的所有选项
-    apiSelect.find('option:not([value="edge-api"]):not([value="oai-tts"])').remove();
+    apiSelect.find('option:not([value="edge-api"]):not([value="azure-tts-1"])').remove();
     
     // 添加自定义API选项
     Object.keys(customAPIs).forEach(apiId => {
@@ -244,7 +245,7 @@ function updateApiOptions() {
     });
     
     // 如果之前选择的是有效的选项，则恢复选择
-    if (currentApi && (currentApi === 'edge-api' || currentApi === 'oai-tts' || customAPIs[currentApi])) {
+    if (currentApi && (currentApi === 'edge-api' || currentApi === 'azure-tts-1' || customAPIs[currentApi])) {
         apiSelect.val(currentApi);
     }
 }
@@ -409,9 +410,9 @@ async function fetchCustomSpeakers(apiId) {
 function updateApiTipsText(apiName) {
     const tips = {
         'edge-api': 'Edge API 请求应该不限次数',
-        'oai-tts': 'OpenAI-TTS 支持情感调整，不支持停顿标签'
+        'azure-tts-1': 'Azure TTS API (官方接口)'
     };
-    
+
     // 如果是自定义API
     if (customAPIs[apiName]) {
         const format = customAPIs[apiName].format || 'openai';
@@ -420,9 +421,9 @@ function updateApiTipsText(apiName) {
     } else {
         $('#apiTips').text(tips[apiName] || '');
     }
-    
+
     // 根据API类型调整界面
-    if (apiName === 'oai-tts' || (customAPIs[apiName] && customAPIs[apiName].format === 'openai')) {
+    if (customAPIs[apiName] && customAPIs[apiName].format === 'openai') {
         $('#instructionsContainer').show();
         $('#formatContainer').show();
         $('#rateContainer, #pitchContainer').hide();
@@ -433,12 +434,12 @@ function updateApiTipsText(apiName) {
         $('#rateContainer, #pitchContainer').show();
         $('#pauseControls').show(); // 显示停顿控制
     }
-    
+
     // 更新字符限制提示文本
     updateCharCountText();
 
     // 根据API类型调整"生成并播放"按钮的位置
-    // 需求：当选择 OAI-TTS（或自定义为 OpenAI 格式）时，将按钮移动到"语音指令（可选）"上方
+    // 需求：当自定义为 OpenAI 格式时，将按钮移动到"语音指令（可选）"上方
     try {
         const playGroup = $('#playButton').closest('.form-group');
         const instructionsGroup = $('#instructionsContainer');
@@ -447,7 +448,7 @@ function updateApiTipsText(apiName) {
         if ($('#playButtonPlaceholder').length === 0) {
             $('<span id="playButtonPlaceholder" style="display:none"></span>').insertAfter(playGroup);
         }
-        if (apiName === 'oai-tts' || (customAPIs[apiName] && customAPIs[apiName].format === 'openai')) {
+        if (customAPIs[apiName] && customAPIs[apiName].format === 'openai') {
             // 移动到"语音指令"上方
             if (instructionsGroup.length) {
                 playGroup.insertBefore(instructionsGroup);
@@ -500,18 +501,18 @@ $(document).ready(function() {
             
             // 根据选择的API更新提示信息
             const tips = {
-                'edge-api': 'Edge API 请求应该不限次数',
-                'oai-tts': 'OpenAI-TTS 支持情感调整，不支持停顿标签'
+                'edge-api': 'Edge API 请求应该不限次数'
             };
             $('#apiTips').text(tips[apiName] || '');
-            
+
             // 根据API显示或隐藏instructions输入框和停顿功能
-            if (apiName === 'oai-tts') {
+            // 移除了 oai-tts 的判断逻辑，仅保留自定义API判断
+            if (customAPIs[apiName] && customAPIs[apiName].format === 'openai') {
                 $('#instructionsContainer').show();
                 $('#formatContainer').show();
                 $('#rateContainer, #pitchContainer').hide();
                 $('#pauseControls').hide(); // 隐藏停顿控制
-                
+
                 // 更新字符限制提示文本
                 updateCharCountText();
             } else {
@@ -519,7 +520,7 @@ $(document).ready(function() {
                 $('#formatContainer').hide();
                 $('#rateContainer, #pitchContainer').show();
                 $('#pauseControls').show(); // 显示停顿控制
-                
+
                 // 恢复默认字符限制提示文本
                 updateCharCountText();
             }
@@ -1227,9 +1228,10 @@ async function makeRequest(url, isPreview, text, requestInfo = '', speakerId = n
         const apiName = $('#api').val();
         const customApi = customAPIs[apiName];
         const isCustomApi = !!customApi;
-        const apiFormat = customApi ? (customApi.format || 'openai') : (apiName === 'oai-tts' ? 'openai' : 'edge');
-        
-        // 如果是OAI-TTS或自定义OpenAI格式API，移除所有的停顿标签
+        // Azure TTS 1 使用 azure-ssml 格式，其他自定义 API 如果没指定格式则默认为 openai
+        const apiFormat = customApi ? (customApi.format || 'openai') : (API_CONFIG[apiName]?.format || 'edge');
+
+        // 如果是自定义OpenAI格式API，移除所有的停顿标签
         if (apiFormat === 'openai') {
             text = text.replace(/<break\s+time=["'](\d+(?:\.\d+)?[ms]s?)["']\s*\/>/g, '');
             
@@ -1268,23 +1270,34 @@ async function makeRequest(url, isPreview, text, requestInfo = '', speakerId = n
         if (apiFormat === 'openai') {
             const instructions = $('#instructions').val().trim();
             const format = $('#audioFormat').val();
-            
+
             requestBody = {
                 model: voice, // 对于OpenAI格式API，voice是model
                 input: text,
                 voice: isCustomApi ? "alloy" : voice, // 自定义API使用模型ID作为model参数，voice参数设置为默认值
                 response_format: format
             };
-            
+
             // 只有当instructions不为空时才添加到请求体中
             if (instructions) {
                 requestBody.instructions = instructions;
             }
-            
+
             // 如果是自定义API且有apiKey，添加Authorization头
             if (isCustomApi && customApi.apiKey) {
                 headers['Authorization'] = `Bearer ${customApi.apiKey}`;
             }
+        } else if (apiFormat === 'azure-ssml') {
+             // Azure TTS 使用 SSML，直接发送给后端转发
+             const rateVal = parseInt($('#rate').val()) || 0;
+             const pitchVal = parseInt($('#pitch').val()) || 0;
+             const rate = rateVal >= 0 ? `+${rateVal}%` : `${rateVal}%`;
+             const pitch = pitchVal >= 0 ? `+${pitchVal}%` : `${pitchVal}%`;
+
+             requestBody = `<speak version='1.0' xml:lang='en-US'><voice xml:lang='en-US' xml:gender='Female' name='${voice}'><prosody rate='${rate}' pitch='${pitch}'>${text}</prosody></voice></speak>`;
+             // 后端转发需要 SSML body
+             headers['Content-Type'] = 'application/ssml+xml';
+             // 不需要在前端设置 Key，Key 在后端环境变量中
         } else {
             requestBody = {
                 text: text,
@@ -1294,24 +1307,30 @@ async function makeRequest(url, isPreview, text, requestInfo = '', speakerId = n
                 preview: isPreview
             };
             
-            // 如果是自定义Edge格式API且有apiKey
-            if (isCustomApi && customApi.apiKey) {
-                // 检查是否是x-api-key格式
-                if (customApi.apiKey.toLowerCase().startsWith('x-api-key:')) {
-                    const keyValue = customApi.apiKey.substring('x-api-key:'.length).trim();
-                    headers['x-api-key'] = keyValue;
-                } else {
-                    headers['Authorization'] = `Bearer ${customApi.apiKey}`;
-                }
+        // 如果是自定义Edge格式API且有apiKey
+        if (isCustomApi && customApi.apiKey) {
+            const key = customApi.apiKey;
+            // 检查是否是x-api-key格式
+            if (key.toLowerCase().startsWith('x-api-key:')) {
+                const keyValue = key.substring('x-api-key:'.length).trim();
+                headers['Ocp-Apim-Subscription-Key'] = keyValue;
+            } else {
+                // Azure TTS 通常使用 Ocp-Apim-Subscription-Key
+                headers['Ocp-Apim-Subscription-Key'] = key;
             }
+            // 自定义 Azure/Edge API 可能需要此头
+            headers['X-Microsoft-OutputFormat'] = "audio-24khz-48kbitrate-mono-mp3";
+        }
         }
 
         console.log('发送请求到:', requestUrl);
-        
+
+        const bodyContent = (typeof requestBody === 'string') ? requestBody : JSON.stringify(requestBody);
+
         const response = await fetch(requestUrl, {
             method: 'POST',
             headers: headers,
-            body: JSON.stringify(requestBody),
+            body: bodyContent,
             signal
         });
 
@@ -1619,7 +1638,7 @@ function getTextLength(str) {
 // 返回每个API的最大段长和总长
 function getApiLimits(apiName) {
     // returns { maxSegment, maxTotal } for each API
-    if (apiName === 'oai-tts' || (customAPIs[apiName] && customAPIs[apiName].format === 'openai')) {
+    if (customAPIs[apiName] && customAPIs[apiName].format === 'openai') {
         return { maxSegment: 400, maxTotal: 2000 };
     } else {
         return { maxSegment: 5000, maxTotal: 100000 };
@@ -1812,9 +1831,9 @@ async function generateVoiceForLongText(segments, currentRequestId, currentSpeak
                     `正在生成#${currentRequestId}请求的 ${i + 1}/${totalSegments} 段语音${retryInfo}...`
                 );
                 
-                // 为OAI-TTS API使用相同的instructions
+                // 为自定义API (format=openai) 使用相同的instructions
                 let instructions = null;
-                if (apiName === 'oai-tts') {
+                if (customAPIs[apiName] && customAPIs[apiName].format === 'openai') {
                     instructions = $('#instructions').val().trim();
                 }
                 
