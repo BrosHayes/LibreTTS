@@ -475,12 +475,12 @@ function updateSliderLabel(sliderId, labelId) {
 }
 
 $(document).ready(function() {
-    // 确保默认API选择为edge-api
+    // 确保默认API选择为azure-tts-1
     if ($('#api').length && !$('#api').val()) {
-        $('#api').val('edge-api');
+        $('#api').val('azure-tts-1');
     }
     loadSpeakers().then(() => {
-        $('#apiTips').text('Edge API 请求应该不限次数');
+        $('#apiTips').text('Azure TTS API (官方接口)');
         
         // 初始化音频播放器
         initializeAudioPlayer();
@@ -917,9 +917,9 @@ $(document).ready(function() {
             // 更新UI
             updateApiOptions();
             
-            // 如果当前选中的是被删除的API，切换到edge-api
+            // 如果当前选中的是被删除的API，切换到azure-tts-1
             if (selectedIds.includes($('#api').val())) {
-                $('#api').val('edge-api').trigger('change');
+                $('#api').val('azure-tts-1').trigger('change');
             }
             
             showInfo(`已删除 ${selectedIds.length} 个自定义API`);
@@ -2028,9 +2028,9 @@ function deleteCustomApi(apiId) {
         // 更新API选项
         updateApiOptions();
         
-        // 如果当前选中的是被删除的API，切换到edge-api
+        // 如果当前选中的是被删除的API，切换到azure-tts-1
         if ($('#api').val() === apiId) {
-            $('#api').val('edge-api').trigger('change');
+            $('#api').val('azure-tts-1').trigger('change');
         }
         
         // 刷新API列表
