@@ -43,6 +43,14 @@ LibreTTS 是一款免费的在线文本转语音工具，支持多种声音选�
     - `speed`: 语速，范围 0.25 到 4.0（默认：1.0）
     - `response_format`: 音频格式，支持 `mp3`、`opus`、`wav`、`pcm` 等（默认：`mp3`）
 
+### Azure TTS API 路径
+
+- `/api/azure-tts` - Azure 认知服务文本转语音 API
+  - 通过 Cloudflare Pages Function 后端代理转发请求，API 密钥安全存储在服务端
+  - 支持 SSML 格式，可精细控制语速和语调
+  - 需要在 Cloudflare Pages 中配置 `AZURE_TTS_KEY` 和 `AZURE_TTS_REGION` 环境变量
+  - 支持多语言语音：中文、英文、日文等
+
 ### Edge API 路径
 
 - `/api/tts` - 文本转语音 API
@@ -184,13 +192,32 @@ Speed: 1.0 (可在 0.25-4.0 之间调整)
    - 构建设置：
      - 构建命令：留空
      - 输出目录：`/`
-     - 环境变量：无需设置
 
-4. 部署完成后，你会获得一个 `xxx.pages.dev` 的域名
+4. 如需启用 Azure TTS 功能，在 Cloudflare Pages 项目设置中添加环境变量：
+   - 进入 **Settings** > **Environment variables**
+   - 添加以下变量（生产环境和预览环境均需设置）：
+     - `AZURE_TTS_KEY`：你的 Azure 语音服务订阅密钥
+     - `AZURE_TTS_REGION`：Azure 服务区域，如 `eastus`（默认值为 `eastus`）
+   - 保存后需重新部署才能生效
+
+5. 部署完成后，你会获得一个 `xxx.pages.dev` 的域名
 
 ## 环境变量
 
-除了原有配置外，现在项目支持设置环境变量 PASSWORD 来开启访问密码验证。如果 PASSWORD 非空，则用户第一次访问页面时会显示密码输入界面，输入正确后在该设备上后续访问将不再需要验证。
+| 变量名 | 必需 | 说明 |
+|--------|------|------|
+| `PASSWORD` | 否 | 访问密码，设置后用户首次访问需输入密码验证 |
+| `AZURE_TTS_KEY` | 否 | Azure 语音服务订阅密钥，启用 Azure TTS 功能时需设置 |
+| `AZURE_TTS_REGION` | 否 | Azure 服务区域（默认：`eastus`），启用 Azure TTS 功能时需设置 |
+
+### Azure 语音服务密钥获取方式
+
+1. 登录 [Azure Portal](https://portal.azure.com/)
+2. 创建 **语音服务**（Speech Services）资源
+3. 在资源的 **密钥和终结点** 页面获取 `KEY 1` 或 `KEY 2` 和 `位置/区域`
+4. 将密钥填入 Cloudflare Pages 环境变量 `AZURE_TTS_KEY`，区域填入 `AZURE_TTS_REGION`
+
+> Azure 语音服务提供免费层（F0），每月可免费合成 50 万字符。
 
 [![Powered by DartNode](https://dartnode.com/branding/DN-Open-Source-sm.png)](https://dartnode.com "Powered by DartNode - Free VPS for Open Source")
 # LibreTTS
