@@ -550,6 +550,12 @@ $(document).ready(function() {
             try { localStorage.setItem('lastText', $(this).val()); } catch (e) {}
         });
 
+        // 清空文本按钮
+        $('#clearTextBtn').on('click', function() {
+            $('#text').val('').trigger('input');
+            $('#text').focus();
+        });
+
         // 添加插入停顿功能
         $('#insertPause').on('click', function() {
             const seconds = parseFloat($('#pauseSeconds').val());
