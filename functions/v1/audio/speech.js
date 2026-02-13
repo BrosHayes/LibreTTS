@@ -9,7 +9,7 @@ let clientId = "76a75279-2ffa-4c3d-8db8-7b47252aa41c";
  * Platform: Cloudflare Pages Functions
  */
 export async function onRequest(context) {
-  const { request } = context;
+  const { request, env } = context;
   
   // Handle OPTIONS request (preflight)
   if (request.method === "OPTIONS") {
@@ -108,7 +108,7 @@ export async function onRequest(context) {
 
     if (chunks.length <= 1) {
       // Short text: single request (handleTTS internally strips markdown)
-      return await handleTTS(input, voiceName, rate, 0, outputFormat, responseFormat);
+      return await handleTTS(input, voiceName, rate, 0, outputFormat, responseFormat, env);
     }
 
     // Long text: process chunks and concatenate audio
@@ -116,7 +116,7 @@ export async function onRequest(context) {
     const audioBuffers = [];
 
     for (let i = 0; i < chunks.length; i++) {
-      const chunkResponse = await handleTTS(chunks[i], voiceName, rate, 0, outputFormat, responseFormat);
+      const chunkResponse = await handleTTS(chunks[i], voiceName, rate, 0, outputFormat, responseFormat, env);
       if (!chunkResponse.ok) {
         const errBody = await chunkResponse.text().catch(() => '');
         throw new Error(`Chunk ${i + 1}/${chunks.length} failed (${chunkResponse.status}): ${errBody}`);
@@ -171,75 +171,100 @@ export async function onRequest(context) {
   }
 }
 
-async function handleTTS(text, voiceName, rate, pitch, outputFormat, responseFormat) {
+async function handleTTS(text, voiceName, rate, pitch, outputFormat, responseFormat, env = null) {
+  const ssml = generateSsml(text, voiceName, rate, pitch);
+  const contentTypeMap = {
+    "mp3": "audio/mpeg",
+    "opus": "audio/opus",
+    "aac": "audio/aac",
+    "flac": "audio/flac",
+    "wav": "audio/wav",
+    "pcm": "audio/pcm"
+  };
+  const contentType = contentTypeMap[responseFormat] || "audio/mpeg";
+
+  // 1) 先尝试 Edge TTS（免费）
   try {
     await refreshEndpoint();
-    
-    // Generate SSML
-    const ssml = generateSsml(text, voiceName, rate, pitch);
-    
-    // Get URL from endpoint
+
     const url = `https://${endpoint.r}.tts.speech.microsoft.com/cognitiveservices/v1`;
-    
-    // Set up headers
-    const headers = {
-      "Authorization": endpoint.t,
-      "Content-Type": "application/ssml+xml",
-      "X-Microsoft-OutputFormat": outputFormat,
-      "User-Agent": "okhttp/4.5.0",
-      "Origin": "https://azure.microsoft.com",
-      "Referer": "https://azure.microsoft.com/"
-    };
-    
-    // Make the request to Microsoft's TTS service
     const response = await fetch(url, {
       method: "POST",
-      headers: headers,
+      headers: {
+        "Authorization": endpoint.t,
+        "Content-Type": "application/ssml+xml",
+        "X-Microsoft-OutputFormat": outputFormat,
+        "User-Agent": "okhttp/4.5.0",
+        "Origin": "https://azure.microsoft.com",
+        "Referer": "https://azure.microsoft.com/"
+      },
       body: ssml
     });
-  
-    // Handle errors
+
     if (!response.ok) {
-      throw new Error(`TTS request failed with status ${response.status}`);
+      throw new Error(`Edge TTS failed with status ${response.status}`);
     }
-  
-    // Set appropriate content type based on response format
-    const contentTypeMap = {
-      "mp3": "audio/mpeg",
-      "opus": "audio/opus",
-      "aac": "audio/aac",
-      "flac": "audio/flac",
-      "wav": "audio/wav",
-      "pcm": "audio/pcm"
-    };
-    
-    const contentType = contentTypeMap[responseFormat] || "audio/mpeg";
-    
-    // Get the audio data
+
     const audioData = await response.arrayBuffer();
-    
-    // Return the audio response
     return new Response(audioData, {
       status: 200,
-      headers: {
-        "Content-Type": contentType,
-        "Access-Control-Allow-Origin": "*",
-      }
+      headers: { "Content-Type": contentType, "Access-Control-Allow-Origin": "*" }
     });
-  } catch (error) {
-    console.error("TTS Error:", error);
-    return new Response(JSON.stringify({ 
-      error: { 
-        message: error.message,
+  } catch (edgeError) {
+    console.error("Edge TTS Error:", edgeError);
+
+    // 2) Edge 失败，回退到 Azure TTS（需要 env 中配置 AZURE_TTS_KEY）
+    if (env && env.AZURE_TTS_KEY) {
+      console.log("Edge TTS 失败，回退到 Azure TTS...");
+      try {
+        const azureRegion = env.AZURE_TTS_REGION || "eastus";
+        const azureUrl = `https://${azureRegion}.tts.speech.microsoft.com/cognitiveservices/v1`;
+        const azureResponse = await fetch(azureUrl, {
+          method: "POST",
+          headers: {
+            "Ocp-Apim-Subscription-Key": env.AZURE_TTS_KEY,
+            "Content-Type": "application/ssml+xml",
+            "X-Microsoft-OutputFormat": outputFormat,
+            "User-Agent": "LibreTTS"
+          },
+          body: ssml
+        });
+
+        if (!azureResponse.ok) {
+          throw new Error(`Azure TTS also failed with status ${azureResponse.status}`);
+        }
+
+        console.log("Azure TTS 回退成功");
+        const audioData = await azureResponse.arrayBuffer();
+        return new Response(audioData, {
+          status: 200,
+          headers: { "Content-Type": contentType, "Access-Control-Allow-Origin": "*" }
+        });
+      } catch (azureError) {
+        console.error("Azure TTS 回退也失败:", azureError);
+        return new Response(JSON.stringify({
+          error: {
+            message: `Edge TTS 和 Azure TTS 均失败: ${azureError.message}`,
+            type: "internal_error",
+            code: "tts_generation_failed"
+          }
+        }), {
+          status: 500,
+          headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+        });
+      }
+    }
+
+    // 没有 Azure 配置，直接返回 Edge 错误
+    return new Response(JSON.stringify({
+      error: {
+        message: edgeError.message,
         type: "internal_error",
         code: "tts_generation_failed"
-      } 
+      }
     }), {
       status: 500,
-      headers: {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
-      }
+      headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
     });
   }
 }

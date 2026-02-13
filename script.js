@@ -475,12 +475,12 @@ function updateSliderLabel(sliderId, labelId) {
 }
 
 $(document).ready(function() {
-    // 确保默认API选择为azure-tts-1
+    // 确保默认API选择为edge-api
     if ($('#api').length && !$('#api').val()) {
-        $('#api').val('azure-tts-1');
+        $('#api').val('edge-api');
     }
     loadSpeakers().then(() => {
-        $('#apiTips').text('Azure TTS API (官方接口)');
+        $('#apiTips').text('Edge API 请求应该不限次数');
         
         // 初始化音频播放器
         initializeAudioPlayer();
@@ -917,9 +917,9 @@ $(document).ready(function() {
             // 更新UI
             updateApiOptions();
             
-            // 如果当前选中的是被删除的API，切换到azure-tts-1
+            // 如果当前选中的是被删除的API，切换到edge-api
             if (selectedIds.includes($('#api').val())) {
-                $('#api').val('azure-tts-1').trigger('change');
+                $('#api').val('edge-api').trigger('change');
             }
             
             showInfo(`已删除 ${selectedIds.length} 个自定义API`);
@@ -1327,20 +1327,53 @@ async function makeRequest(url, isPreview, text, requestInfo = '', speakerId = n
 
         const bodyContent = (typeof requestBody === 'string') ? requestBody : JSON.stringify(requestBody);
 
-        const response = await fetch(requestUrl, {
-            method: 'POST',
-            headers: headers,
-            body: bodyContent,
-            signal
-        });
+        let response;
+        try {
+            response = await fetch(requestUrl, {
+                method: 'POST',
+                headers: headers,
+                body: bodyContent,
+                signal
+            });
 
-        console.log('Fetch 已完成加载：' + response.status);
+            console.log('Fetch 已完成加载：' + response.status);
 
-        if (!response.ok) {
-            // 增强错误信息，尝试获取响应内容
-            const errorText = await response.text().catch(() => '');
-            console.error('服务器响应错误:', response.status, response.statusText, errorText);
-            throw new Error(`服务器响应错误: ${response.status} - ${errorText || response.statusText}`);
+            if (!response.ok) {
+                const errorText = await response.text().catch(() => '');
+                console.error('服务器响应错误:', response.status, response.statusText, errorText);
+                throw new Error(`服务器响应错误: ${response.status} - ${errorText || response.statusText}`);
+            }
+        } catch (fetchError) {
+            // Edge API 失败时自动回退到 Azure TTS
+            if (apiName === 'edge-api' && API_CONFIG['azure-tts-1'] && fetchError.name !== 'AbortError') {
+                console.warn('Edge API 失败，自动回退到 Azure TTS:', fetchError.message);
+                showInfo('Edge API 请求失败，自动切换到 Azure TTS...');
+
+                const voice = speakerId || $('#speaker').val();
+                const rateVal = parseInt($('#rate').val()) || 0;
+                const pitchVal = parseInt($('#pitch').val()) || 0;
+                const azureRate = rateVal >= 0 ? `+${rateVal}%` : `${rateVal}%`;
+                const azurePitch = pitchVal >= 0 ? `+${pitchVal}%` : `${pitchVal}%`;
+                const ssml = `<speak version='1.0' xml:lang='en-US'><voice xml:lang='en-US' xml:gender='Female' name='${voice}'><prosody rate='${azureRate}' pitch='${azurePitch}'>${text}</prosody></voice></speak>`;
+
+                response = await fetch('/api/azure-tts', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/ssml+xml',
+                        'Accept': 'audio/mpeg',
+                    },
+                    body: ssml,
+                    signal
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text().catch(() => '');
+                    throw new Error(`Edge API 和 Azure TTS 均请求失败: ${errorText || response.statusText}`);
+                }
+                console.log('Azure TTS 回退成功');
+            } else {
+                throw fetchError;
+            }
         }
 
         const blob = await response.blob();
@@ -2028,9 +2061,9 @@ function deleteCustomApi(apiId) {
         // 更新API选项
         updateApiOptions();
         
-        // 如果当前选中的是被删除的API，切换到azure-tts-1
+        // 如果当前选中的是被删除的API，切换到edge-api
         if ($('#api').val() === apiId) {
-            $('#api').val('azure-tts-1').trigger('change');
+            $('#api').val('edge-api').trigger('change');
         }
         
         // 刷新API列表
