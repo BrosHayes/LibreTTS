@@ -103,38 +103,36 @@ export async function onRequest(context) {
     
     const outputFormat = formatMap[responseFormat] || formatMap["mp3"];
 
-    // Clean markdown before processing
-    const cleanInput = stripMarkdown(input);
-
     // Split long text into chunks for reliable TTS generation
-    const chunks = splitTextForTTS(cleanInput);
+    const chunks = splitTextForTTS(input);
 
     if (chunks.length <= 1) {
-      // Short text: single request
-      return await handleTTS(cleanInput, voiceName, rate, 0, outputFormat, responseFormat);
+      // Short text: single request (handleTTS internally strips markdown)
+      return await handleTTS(input, voiceName, rate, 0, outputFormat, responseFormat);
     }
 
     // Long text: process chunks and concatenate audio
-    console.log(`Long text detected (${cleanInput.length} chars), splitting into ${chunks.length} chunks`);
+    console.log(`Long text detected (${input.length} chars), splitting into ${chunks.length} chunks`);
     const audioBuffers = [];
 
     for (let i = 0; i < chunks.length; i++) {
       const chunkResponse = await handleTTS(chunks[i], voiceName, rate, 0, outputFormat, responseFormat);
       if (!chunkResponse.ok) {
-        throw new Error(`Chunk ${i + 1}/${chunks.length} failed with status ${chunkResponse.status}`);
+        const errBody = await chunkResponse.text().catch(() => '');
+        throw new Error(`Chunk ${i + 1}/${chunks.length} failed (${chunkResponse.status}): ${errBody}`);
       }
       const buffer = await chunkResponse.arrayBuffer();
       if (buffer.byteLength > 0) {
-        audioBuffers.push(buffer);
+        audioBuffers.push(new Uint8Array(buffer));
       }
     }
 
-    // Concatenate all audio buffers (MP3 frames are independent, direct concat works)
+    // Concatenate all audio chunks (MP3 frames are independent, direct concat works)
     const totalLength = audioBuffers.reduce((sum, buf) => sum + buf.byteLength, 0);
     const combined = new Uint8Array(totalLength);
     let offset = 0;
     for (const buf of audioBuffers) {
-      combined.set(new Uint8Array(buf), offset);
+      combined.set(buf, offset);
       offset += buf.byteLength;
     }
 
@@ -434,12 +432,43 @@ function arrayBufferToBase64(buffer) {
 // --- Long text chunking ---
 const TTS_CHUNK_THRESHOLD = 2000;
 
+// Split text at sentence boundaries (no lookbehind regex for CF Workers compatibility)
+function splitBySentences(text) {
+  const sentenceEnders = '。！？.!?\n';
+  const segments = [];
+  let current = '';
+  for (let i = 0; i < text.length; i++) {
+    current += text[i];
+    if (sentenceEnders.includes(text[i])) {
+      if (current.trim()) segments.push(current);
+      current = '';
+    }
+  }
+  if (current.trim()) segments.push(current);
+  return segments;
+}
+
+function splitBySecondary(text) {
+  const delimiters = '，,；;：:、';
+  const segments = [];
+  let current = '';
+  for (let i = 0; i < text.length; i++) {
+    current += text[i];
+    if (delimiters.includes(text[i])) {
+      if (current.trim()) segments.push(current);
+      current = '';
+    }
+  }
+  if (current.trim()) segments.push(current);
+  return segments;
+}
+
 function splitTextForTTS(text) {
   text = text.trim();
   if (text.length <= TTS_CHUNK_THRESHOLD) return [text];
 
   // Step 1: Split by sentence-ending punctuation and newlines
-  const rawSegments = text.split(/(?<=[。！？.!?\n])/);
+  const rawSegments = splitBySentences(text);
 
   // Step 2: Merge short segments, respect max length
   const merged = [];
@@ -463,7 +492,7 @@ function splitTextForTTS(text) {
       result.push(chunk);
       continue;
     }
-    const subSegments = chunk.split(/(?<=[，,；;：:、])/);
+    const subSegments = splitBySecondary(chunk);
     let subBuffer = '';
     for (const sub of subSegments) {
       if (subBuffer && subBuffer.length + sub.length > TTS_CHUNK_THRESHOLD) {
