@@ -550,11 +550,7 @@ $(document).ready(function() {
             try { localStorage.setItem('lastText', $(this).val()); } catch (e) {}
         });
 
-        // 清空文本按钮
-        $('#clearTextBtn').on('click', function() {
-            $('#text').val('').trigger('input');
-            $('#text').focus();
-        });
+        // 清空文本按钮（使用事件委托）
 
         // 添加插入停顿功能
         $('#insertPause').on('click', function() {
@@ -587,6 +583,12 @@ $(document).ready(function() {
         });
     });
     
+    // 事件委托：清空文本
+    $(document).on('click', '#clearTextBtn', function() {
+        $('#text').val('').trigger('input');
+        $('#text').focus();
+    });
+
     // 事件委托：生成语音
     $(document).on('click', '#generateButton', function() {
         if (canMakeRequest()) {
